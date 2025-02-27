@@ -7,7 +7,7 @@ from langchain.prompts import PromptTemplate
 from langchain_community.llms import HuggingFaceHub
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import CSVLoader
-from langchain.vectorstores import FAISS  # Import FAISS
+from langchain_community.vectorstores import FAISS  # ✅ Fixed Import
 from langchain.schema import Document
 from dotenv import load_dotenv
 
@@ -17,7 +17,7 @@ load_dotenv()
 # Suppress TensorFlow warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-# Step 1: Download the Titanic Dataset from GitHub if not present
+# Step 1: Download Titanic Dataset if not present
 csv_file = "titanic.csv"
 if not os.path.exists(csv_file):
     url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
@@ -37,10 +37,7 @@ if not hf_api_token:
 loader = CSVLoader(file_path=csv_file)
 data = loader.load()
 
-documents = [
-    Document(page_content=", ".join([f"{key}: {value}" for key, value in row.items()])) 
-    for row in data
-]
+documents = [Document(page_content=doc.page_content) for doc in data]  # ✅ Fixed
 
 # Step 4: Initialize Embeddings
 embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -51,7 +48,7 @@ if os.path.exists(faiss_path):
     faiss_index = FAISS.load_local(faiss_path, embedding)
 else:
     faiss_index = FAISS.from_documents(documents, embedding)
-    faiss_index.save_local(faiss_path)  # Save for future use
+    faiss_index.save_local(faiss_path)
 
 # Step 6: Set Up Falcon Model
 llm = HuggingFaceHub(
@@ -65,6 +62,7 @@ prompt_template = PromptTemplate(
     input_variables=["context", "question"],
     template="Based on the Titanic dataset and the following context:\n\n{context}\n\nAnswer this question: {question}"
 )
+
 
 # Step 8: Create a LangChain LLMChain
 chain = LLMChain(llm=llm, prompt=prompt_template)
@@ -98,4 +96,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port)
-
