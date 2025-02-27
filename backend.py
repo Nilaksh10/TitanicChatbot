@@ -11,68 +11,78 @@ from langchain.vectorstores import FAISS  # Import FAISS
 from langchain.schema import Document
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
 # Suppress TensorFlow warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-# Step 1: Download the Titanic Dataset from GitHub
-url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
-response = requests.get(url)
-with open("titanic.csv", "wb") as file:
-    file.write(response.content)
+# Step 1: Download the Titanic Dataset from GitHub if not present
+csv_file = "titanic.csv"
+if not os.path.exists(csv_file):
+    url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
+    response = requests.get(url)
+    with open(csv_file, "wb") as file:
+        file.write(response.content)
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Step 2: Get Hugging Face API Token from .env
+# Step 2: Get Hugging Face API Token
 hf_api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-if hf_api_token is None:
+if not hf_api_token:
     raise ValueError("HUGGINGFACEHUB_API_TOKEN is not set in the .env file")
 
-# Step 3: Load Titanic Dataset from CSV and Convert to Documents
-loader = CSVLoader(file_path="titanic.csv")
+# Step 3: Load CSV and Convert to Documents
+loader = CSVLoader(file_path=csv_file)
 data = loader.load()
-documents = [Document(page_content=str(row)) for row in data]
 
-# Step 4: Specify an Embedding Model
+documents = [
+    Document(page_content=", ".join([f"{key}: {value}" for key, value in row.items()])) 
+    for row in data
+]
+
+# Step 4: Initialize Embeddings
 embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Step 5: Create a FAISS Index
-faiss_index = FAISS.from_documents(documents, embedding)
+# Step 5: Load or Create FAISS Index
+faiss_path = "faiss_index"
+if os.path.exists(faiss_path):
+    faiss_index = FAISS.load_local(faiss_path, embedding)
+else:
+    faiss_index = FAISS.from_documents(documents, embedding)
+    faiss_index.save_local(faiss_path)  # Save for future use
 
-# Step 6: Set Up the Chatbot with Falcon Model
+# Step 6: Set Up Falcon Model
 llm = HuggingFaceHub(
     repo_id="tiiuae/falcon-7b-instruct",
     huggingfacehub_api_token=hf_api_token,
     model_kwargs={"temperature": 0.7, "max_length": 512}
 )
 
-# Step 7: Define a Prompt Template
+# Step 7: Define Prompt Template
 prompt_template = PromptTemplate(
     input_variables=["context", "question"],
-    template="Based on the Titanic dataset, and the following context:\n\n{context}\n\nAnswer this question: {question}"
+    template="Based on the Titanic dataset and the following context:\n\n{context}\n\nAnswer this question: {question}"
 )
 
 # Step 8: Create a LangChain LLMChain
 chain = LLMChain(llm=llm, prompt=prompt_template)
 
-# Define a request model for the API
+# Define API Request and Response Models
 class ChatRequest(BaseModel):
     question: str
 
-# Define a response model for the API
 class ChatResponse(BaseModel):
     answer: str
 
-# API endpoint to handle chatbot requests
+# API Endpoint
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
         question = request.question
 
-        # Retrieve relevant documents from FAISS
+        # Retrieve relevant documents
         docs = faiss_index.similarity_search(question, k=3)
         context = "\n".join([doc.page_content for doc in docs])
 
@@ -83,8 +93,9 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Run the FastAPI app
+# Run FastAPI App
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port)
+
