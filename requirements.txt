@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+requests
+pydantic
+streamlit
+langchain
+langchain-community
+langchain-huggingface
+huggingface_hub
+sentence-transformers
+numpy
+pandas
