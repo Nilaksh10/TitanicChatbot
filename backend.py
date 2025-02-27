@@ -45,7 +45,7 @@ embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L
 # Step 5: Load or Create FAISS Index
 faiss_path = "faiss_index"
 if os.path.exists(faiss_path):
-    faiss_index = FAISS.load_local(faiss_path, embedding)
+    faiss_index = FAISS.load_local(faiss_path, embedding, allow_dangerous_deserialization=True)
 else:
     faiss_index = FAISS.from_documents(documents, embedding)
     faiss_index.save_local(faiss_path)
@@ -62,7 +62,6 @@ prompt_template = PromptTemplate(
     input_variables=["context", "question"],
     template="Based on the Titanic dataset and the following context:\n\n{context}\n\nAnswer this question: {question}"
 )
-
 
 # Step 8: Create a LangChain LLMChain
 chain = LLMChain(llm=llm, prompt=prompt_template)
