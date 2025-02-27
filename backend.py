@@ -5,93 +5,80 @@ from pydantic import BaseModel
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_community.llms import HuggingFaceHub
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
+from langchain.indexes import VectorstoreIndexCreator
 from langchain_community.document_loaders import CSVLoader
-from langchain_community.vectorstores import FAISS  # ✅ Fixed Import
-from langchain.schema import Document
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # Import dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
 # Suppress TensorFlow warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-# Step 1: Download Titanic Dataset if not present
-csv_file = "titanic.csv"
-if not os.path.exists(csv_file):
-    url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
-    response = requests.get(url)
-    with open(csv_file, "wb") as file:
-        file.write(response.content)
+# Step 1: Download the Titanic Dataset from GitHub
+url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
+response = requests.get(url)
+with open("titanic.csv", "wb") as file:
+    file.write(response.content)
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Step 2: Get Hugging Face API Token
-hf_api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-if not hf_api_token:
+# Step 2: Set Hugging Face API Token from .env
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+if not hf_token:
     raise ValueError("HUGGINGFACEHUB_API_TOKEN is not set in the .env file")
+os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_token
 
-# Step 3: Load CSV and Convert to Documents
-loader = CSVLoader(file_path=csv_file)
-data = loader.load()
+# Step 3: Load Titanic Dataset from Local CSV
+loader = CSVLoader(file_path="titanic.csv")
 
-documents = [Document(page_content=doc.page_content) for doc in data]  # ✅ Fixed
-
-# Step 4: Initialize Embeddings
+# Step 4: Specify an Embedding Model
 embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Step 5: Load or Create FAISS Index
-faiss_path = "faiss_index"
-if os.path.exists(faiss_path):
-    faiss_index = FAISS.load_local(faiss_path, embedding, allow_dangerous_deserialization=True)
-else:
-    faiss_index = FAISS.from_documents(documents, embedding)
-    faiss_index.save_local(faiss_path)
+# Step 5: Create a Vectorstore Index with the Embedding Model
+index = VectorstoreIndexCreator(embedding=embedding).from_loaders([loader])
 
-# Step 6: Set Up Falcon Model
+# Step 6: Set Up the Chatbot with Falcon Model
 llm = HuggingFaceHub(
-    repo_id="tiiuae/falcon-7b-instruct",
-    huggingfacehub_api_token=hf_api_token,
-    model_kwargs={"temperature": 0.7, "max_length": 512}
+    repo_id="tiiuae/falcon-7b-instruct",  # Falcon model repository ID
+    model_kwargs={"temperature": 0.7, "max_length": 512}  # Adjust parameters
 )
 
-# Step 7: Define Prompt Template
+# Step 7: Define a Prompt Template
 prompt_template = PromptTemplate(
-    input_variables=["context", "question"],
-    template="Based on the Titanic dataset and the following context:\n\n{context}\n\nAnswer this question: {question}"
+    input_variables=["question"],
+    template="Answer the following question based on the Titanic dataset: {question}"
 )
 
 # Step 8: Create a LangChain LLMChain
 chain = LLMChain(llm=llm, prompt=prompt_template)
 
-# Define API Request and Response Models
+# Define a request model for the API
 class ChatRequest(BaseModel):
     question: str
 
+# Define a response model for the API
 class ChatResponse(BaseModel):
     answer: str
 
-# API Endpoint
+# API endpoint to handle chatbot requests
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
+        # Get the question from the request
         question = request.question
 
-        # Retrieve relevant documents
-        docs = faiss_index.similarity_search(question, k=3)
-        context = "\n".join([doc.page_content for doc in docs])
+        # Get the answer from the chatbot
+        answer = chain.run(question)
 
-        # Get answer from LLM
-        answer = chain.run({"context": context, "question": question})
-
+        # Return the answer
         return ChatResponse(answer=answer)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Run FastAPI App
+# Run the FastAPI app
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
